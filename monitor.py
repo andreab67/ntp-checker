@@ -22,7 +22,7 @@ LOG_PATH = os.getenv('LOG_PATH', '/var/log/ntp-checker.log')
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'DEBUG').upper()
 PY_UNBUFFERED = os.getenv('PYTHONUNBUFFERED', '1')
 
-# --- NEW: DB config ---
+# --- DB config ---
 DB_URL = os.getenv('DATABASE_URL')  # postgresql://user:pass@host:5432/ntp-checker
 POSTGRES_TABLE = os.getenv('POSTGRES_TABLE', 'metrics.ntp_parent')
 
@@ -231,7 +231,7 @@ def check_ntp_health() -> tuple[bool, str]:
         return False, ' | '.join(problems) + ' || ' + ' | '.join(detail)
     return True, 'OK | ' + ' | '.join(detail)
 
-# -------- NEW: DB insert helper --------
+# -------- DB insert helper --------
 def db_insert_sample(tracking: dict, sources: dict, gps_ok: bool, gps_summary: str) -> None:
     """
     Insert a single row into the configured table (default metrics.ntp_parent).
@@ -308,4 +308,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
