@@ -103,8 +103,19 @@ deploy:
     - kubectl apply -f kubernetes/service.yaml
     - kubectl apply -f kubernetes/ingress.yaml
     - kubectl apply -f kubernetes/deployment.yaml
+     # ---- Post-deploy check & optional restart ----
+    - |
+      echo "Post-deploy: restart ntp-gps-stack if it exists..."
+      if kubectl -n "$KUBE_NAMESPACE" get deploy/ntp-gps-stack >/dev/null 2>&1; then
+        echo "Found deployment ntp-gps-stack in namespace $KUBE_NAMESPACE. Restarting rollout..."
+        kubectl -n "$KUBE_NAMESPACE" rollout restart deploy/ntp-gps-stack
+        kubectl -n "$KUBE_NAMESPACE" rollout status deploy/ntp-gps-stack --timeout=300s
+      else
+        echo "Deployment ntp-gps-stack not found in namespace $KUBE_NAMESPACE. Skipping restart."
+      fi
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
 
 
 
