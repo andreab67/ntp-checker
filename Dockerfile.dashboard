@@ -1,4 +1,3 @@
-# Dashboard: Flask + Plotly (CDN) + psycopg2-binary
 FROM python:3.11-slim
 
 # System deps (certs + tz); no build toolchain needed when using psycopg2-binary wheels
@@ -30,3 +29,4 @@ EXPOSE 8080
 # DASH_PORT is optional; defaults to 8080 in app.py
 ENV DASH_PORT=8080
 CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:8080", "app:app"]
+
