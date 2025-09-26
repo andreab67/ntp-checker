@@ -9,9 +9,9 @@ import psycopg2
 import psycopg2.extras
 
 # -------- Settings from env (with sensible defaults) --------
-HOST = os.getenv('NTP_HOST', 'observium.andrea-house.com')
-IP_FALLBACK = os.getenv('NTP_IP', '192.168.101.153')
-SSH_USER = os.getenv('SSH_USER', 'odroid')
+HOST = os.getenv('NTP_HOST', 'myntp')
+IP_FALLBACK = os.getenv('NTP_IP', '0.0.0.0')
+SSH_USER = os.getenv('SSH_USER', 'ubuntu')
 SSH_PORT = os.getenv('SSH_PORT', '22')
 CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL_SEC', '30'))
 MAX_ACCEPTABLE_STRATUM = int(os.getenv('MAX_STRATUM', '4'))
@@ -308,3 +308,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
