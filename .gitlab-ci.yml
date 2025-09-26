@@ -20,7 +20,6 @@ container_scanning:
   - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(echo -n ${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD} | base64)\"}}}" > /kaniko/.docker/config.json
 
 # ---------- BUILD TWO IMAGES IN PARALLEL ----------
-# ---------- BUILD TWO IMAGES IN PARALLEL ----------
 
 build:checker:
   stage: build
@@ -110,5 +109,6 @@ deploy:
     - kubectl apply -f kubernetes/deployment.yaml
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
 
 
