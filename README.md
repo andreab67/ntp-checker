@@ -1,4 +1,4 @@
-# Site Checker
+# NTP Checker
 
 A Kubernetes-based system to monitor NTP/GPS health, store results in PostgreSQL, and visualize metrics through a web dashboard.
 
