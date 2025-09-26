@@ -1,0 +1,114 @@
+stages:
+  - build
+  - test      # required for Security templates you included
+  - scan
+  - deploy
+
+# Security templates (keep as you had)
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Container-Scanning.gitlab-ci.yml
+  - template: Security/Secret-Detection.gitlab-ci.yml
+
+# Disable the default job from the Container Scanning template
+container_scanning:
+  rules:
+    - when: never
+
+# Common Kaniko auth (anchor)
+.kaniko_auth: &kaniko_auth
+  - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(echo -n ${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD} | base64)\"}}}" > /kaniko/.docker/config.json
+
+# ---------- BUILD TWO IMAGES IN PARALLEL ----------
+# ---------- BUILD TWO IMAGES IN PARALLEL ----------
+
+build:checker:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:v1.9.0-debug
+    entrypoint: ["/busybox/sh", "-c"]   # override Kaniko's default entrypoint
+  variables:
+    DOCKER_CONFIG: /kaniko/.docker
+  script:
+    - *kaniko_auth
+    - >
+      /kaniko/executor
+      --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/Dockerfile.checker"
+      --destination "${CI_REGISTRY_IMAGE}/checker:latest"
+      --insecure
+      --skip-tls-verify
+      --skip-tls-verify-pull
+      --insecure-pull
+      --force
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+build:dashboard:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:v1.9.0-debug
+    entrypoint: ["/busybox/sh", "-c"]
+  variables:
+    DOCKER_CONFIG: /kaniko/.docker
+  script:
+    - *kaniko_auth
+    - >
+      /kaniko/executor
+      --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/Dockerfile.dashboard"
+      --destination "${CI_REGISTRY_IMAGE}/dashboard:latest"
+      --insecure
+      --skip-tls-verify
+      --skip-tls-verify-pull
+      --insecure-pull
+      --force
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+
+# ---------- CONTAINER SCANNING FOR EACH IMAGE ----------
+# NOTE: extend the job 'container_scanning' from the template (no dot)
+container_scanning:checker:
+  stage: scan
+  needs: ["build:checker"]
+  variables:
+    CS_IMAGE: "$CI_REGISTRY_IMAGE/checker:latest"
+  extends: container_scanning
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+container_scanning:dashboard:
+  stage: scan
+  needs: ["build:dashboard"]
+  variables:
+    CS_IMAGE: "$CI_REGISTRY_IMAGE/dashboard:latest"
+  extends: container_scanning
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# ---------- DEPLOY ----------
+deploy:
+  stage: deploy
+  needs: ["build:checker", "build:dashboard"]
+  image: debian:stable-slim
+  before_script:
+    - apt-get update && apt-get install -y curl ca-certificates
+    - curl -sL https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl
+    - chmod +x /usr/local/bin/kubectl
+    - mkdir -p "$CI_PROJECT_DIR/kube"
+    # GitLab 'file' variables expose a *path* to a temp file. Just copy it.
+    - cp "$KUBECONFIG_FILE" "$CI_PROJECT_DIR/kube/config"
+    - export KUBECONFIG="$CI_PROJECT_DIR/kube/config"
+    # Optional: select a specific context if your kubeconfig has several
+    - if [ -n "$KUBE_CONTEXT" ]; then kubectl config use-context "$KUBE_CONTEXT"; fi
+    - kubectl config get-contexts
+    - kubectl cluster-info
+  script:
+    - kubectl apply -f kubernetes/service.yaml
+    - kubectl apply -f kubernetes/ingress.yaml
+    - kubectl apply -f kubernetes/deployment.yaml
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+
