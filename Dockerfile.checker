@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# System deps: SSH client, CA certs, tzdata, procps
+# System deps: SSH client, CA certs, tzdata
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client ca-certificates tzdata && \
     rm -rf /var/lib/apt/lists/*
@@ -23,4 +23,5 @@ USER appuser
 
 # By default, just run the monitor loop
 CMD ["python", "/app/monitor.py"]
+
 
