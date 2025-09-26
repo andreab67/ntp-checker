@@ -1,0 +1,26 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ntp-partitions-maint
+  namespace: ntp-checker
+spec:
+  schedule: "10 0 * * *"  # 00:10 UTC daily
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: maint
+              image: postgres:15
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: pg-url
+                      key: DATABASE_URL
+              command: ["/bin/sh","-lc"]
+              args:
+                - >
+                  psql "$DATABASE_URL" -v ON_ERROR_STOP=1
+                  -c "SELECT metrics.maintain_partitions(90, 1);"

@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ntp-dashboard
+  namespace: ntp-checker
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - ntp-dashboard fqdn
+    secretName: ntp-dashboard-tls   # must exist in ntp-checker namespace
+  rules:
+  - host: ntp-dashboard fqdn
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ntp-dashboard
+            port:
+              number: 80

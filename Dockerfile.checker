@@ -1,0 +1,26 @@
+# Debian-slim base is fine; use alpine if you prefer
+FROM python:3.11-slim
+
+# System deps: SSH client, CA certs, tzdata, procps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssh-client ca-certificates tzdata && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Python deps (server-side only; Plotly comes from CDN in the HTML)
+RUN pip install --no-cache-dir psycopg2-binary
+
+# App directory and non-root user
+WORKDIR /app
+RUN useradd -m -u 10001 appuser
+
+# Copy your monitor
+COPY monitor.py /app/monitor.py
+
+# Create log directory (your script defaults to /var/log/ntp-checker.log)
+RUN mkdir -p /var/log && chown -R appuser:appuser /var/log /app
+
+# Drop privileges
+USER appuser
+
+# By default, just run the monitor loop
+CMD ["python", "/app/monitor.py"]

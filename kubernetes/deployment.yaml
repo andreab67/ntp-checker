@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ntp-gps-stack
+  namespace: ntp-checker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ntp-gps-stack
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  template:
+    metadata:
+      labels:
+        app: ntp-gps-stack
+    spec:
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: checker
+          image: repository/containers/ntp-checker/checker:latest
+          imagePullPolicy: Always
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pg-url
+                  key: DATABASE_URL
+            - name: POSTGRES_TABLE
+              value: metrics.ntp_parent
+            - name: CHECK_INTERVAL_SEC
+              value: "300"
+          envFrom:
+            - secretRef:
+                name: ses-creds
+          volumeMounts:
+            - name: ssh-key
+              mountPath: /home/appuser/.ssh/id_ed25519
+              subPath: id_ed25519
+              readOnly: true
+            - name: known-hosts
+              mountPath: /home/appuser/.ssh/known_hosts
+              subPath: known_hosts
+              readOnly: true
+
+        - name: dashboard
+          image: repository/containers/ntp-checker/dashboard:latest
+          imagePullPolicy: Always
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: pg-url
+                  key: DATABASE_URL
+            - name: DASH_PORT
+              value: "8080"
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+
+      volumes:
+        - name: ssh-key
+          secret:
+            secretName: ntp-ssh-key
+            # 0440 for private key (decimal 288)
+            defaultMode: 288
+        - name: known-hosts
+          configMap:
+            name: ntp-known-hosts
+            # 0444 for known_hosts (decimal 292)
+            defaultMode: 292

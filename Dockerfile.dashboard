@@ -1,0 +1,32 @@
+# Dashboard: Flask + Plotly (CDN) + psycopg2-binary
+FROM python:3.11-slim
+
+# System deps (certs + tz); no build toolchain needed when using psycopg2-binary wheels
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates tzdata && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create non-root user and app dir
+WORKDIR /app
+RUN useradd -m -u 10001 appuser
+
+# Copy the Flask app
+# Make sure app.py is the file I gave you (serves three Plotly charts and JSON APIs)
+COPY app.py /app/app.py
+
+# Install Python deps (server-side only; Plotly comes from CDN in the HTML)
+RUN pip install --no-cache-dir \
+      flask \
+      gunicorn \
+      psycopg2-binary
+
+# Drop privileges
+USER appuser
+
+# Expose the dashboard port (K8s Service will target 8080)
+EXPOSE 8080
+
+# Start the web app
+# DASH_PORT is optional; defaults to 8080 in app.py
+ENV DASH_PORT=8080
+CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:8080", "app:app"]
