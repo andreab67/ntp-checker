@@ -9,7 +9,6 @@ include:
   - template: Security/Container-Scanning.gitlab-ci.yml
   - template: Security/Secret-Detection.gitlab-ci.yml
 
-# Disable the default job from the Container Scanning template
 container_scanning:
   rules:
     - when: never
@@ -106,6 +105,7 @@ deploy:
     - kubectl apply -f kubernetes/deployment.yaml
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
 
 
 
