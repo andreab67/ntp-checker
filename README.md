@@ -1,4 +1,4 @@
-# NTP Checker
+# Site Checker
 
 A Kubernetes-based system to monitor NTP/GPS health, store results in PostgreSQL, and visualize metrics through a web dashboard.
 
@@ -130,22 +130,16 @@ kubectl apply -f ingress.yaml
 
 ---
 
+## Architecture
+
+![Architecture](architecture.jpg)
+
+**Flow**: Browser → Ingress → Service → Dashboard Pod → PostgreSQL.  
+The checker pod writes metrics directly into PostgreSQL.
+
+---
+
 ## Roadmap
 - Add Prometheus metrics exporter.
 - Expand dashboard with alert history.
 - Automate TLS with cert-manager.
-
----
-
-## Architecture Diagram
-
-![Architecture](architecture.png)
-
-
-
-### Explanation
-- **monitor.py** collects NTP/GPS health from the remote host and writes metrics to PostgreSQL.  
-- **app.py** provides APIs and dashboard views, querying PostgreSQL.  
-- **Service** exposes the dashboard inside the cluster.  
-- **Ingress** publishes the dashboard externally with TLS.  
-- **User Browser** accesses the dashboard securely via HTTPS.  
