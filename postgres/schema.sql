@@ -114,5 +114,74 @@ SELECT metrics.create_daily_partition(current_date - 1);
 SELECT metrics.create_daily_partition(current_date);
 SELECT metrics.create_daily_partition(current_date + 1);
 
--- 6) Optional: run once now (90-day retention, pre-create 1 day ahead)
+-- =====================================================================
+-- 6) pg_cron: schedule automatic partition maintenance (RDS-friendly)
+-- =====================================================================
+-- Prerequisites (especially on Amazon RDS for PostgreSQL):
+--   * Add 'pg_cron' to the DB parameter group's shared_preload_libraries.
+--   * Set parameter 'cron.database_name' to THIS database's name.
+--   * Restart the DB instance for parameters to take effect.
+-- All pg_cron schedules run in the server's time zone (often UTC on RDS).
+
+-- Create the extension if available
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- Wrapper marked SECURITY DEFINER so the cron job can run with the creator's privileges.
+-- Adjust retention/premake as desired (e.g., 90-day retention, pre-create 1 day ahead).
+CREATE OR REPLACE FUNCTION metrics.run_partition_maintenance()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  PERFORM metrics.maintain_partitions(90, 1);
+END;
+$$;
+
+-- Ensure the function owner is a role that will remain (alternatively ALTER FUNCTION OWNER TO some_role;)
+
+-- Create or update a daily cron job at 00:15 (server time) to run maintenance.
+DO $$
+DECLARE
+  v_has_jobname boolean;
+  v_jobid int;
+BEGIN
+  -- Detect whether pg_cron has 'jobname' column (newer versions)
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'cron' AND table_name = 'job' AND column_name = 'jobname'
+  ) INTO v_has_jobname;
+
+  IF v_has_jobname THEN
+    -- Use jobname-based idempotency
+    SELECT jobid INTO v_jobid FROM cron.job WHERE jobname = 'metrics_partition_maint' LIMIT 1;
+
+    IF v_jobid IS NULL THEN
+      PERFORM cron.schedule('metrics_partition_maint', '15 0 * * *',
+                            $$SELECT metrics.run_partition_maintenance();$$);
+    ELSE
+      PERFORM cron.alter_job(v_jobid,
+              schedule => '15 0 * * *',
+              command  => 'SELECT metrics.run_partition_maintenance();',
+              active   => true);
+    END IF;
+  ELSE
+    -- Fallback for older pg_cron: match by command text
+    SELECT jobid INTO v_jobid
+      FROM cron.job
+     WHERE command = 'SELECT metrics.run_partition_maintenance();'
+     LIMIT 1;
+
+    IF v_jobid IS NULL THEN
+      PERFORM cron.schedule('15 0 * * *', 'SELECT metrics.run_partition_maintenance();');
+    ELSE
+      PERFORM cron.alter_job(v_jobid,
+              schedule => '15 0 * * *',
+              command  => 'SELECT metrics.run_partition_maintenance();',
+              active   => true);
+    END IF;
+  END IF;
+END$$;
+
+-- 7) Optional: run once now (90-day retention, pre-create 1 day ahead)
 SELECT metrics.maintain_partitions(90, 1);
