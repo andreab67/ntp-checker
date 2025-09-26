@@ -4,7 +4,7 @@ from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# --- NEW: Postgres ---
+# --- Postgres ---
 import psycopg2
 import psycopg2.extras
 
@@ -308,5 +308,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
 
