@@ -1,0 +1,160 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+
+  # ---------- VALIDATION STAGE ----------
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install lint tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff yamllint
+
+      - name: Ruff (Python lint)
+        run: ruff check .
+        continue-on-error: true
+
+      - name: Python syntax check
+        run: python -m py_compile monitor.py app.py
+
+      - name: yamllint (Kubernetes manifests)
+        run: yamllint -d "{extends: relaxed, rules: {line-length: disable}}" kubernetes/
+        continue-on-error: true
+
+      - name: Hadolint (Dockerfile.checker)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.checker
+          failure-threshold: warning
+        continue-on-error: true
+
+      - name: Hadolint (Dockerfile.dashboard)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile.dashboard
+          failure-threshold: warning
+        continue-on-error: true
+
+  # ---------- BUILD STAGE (MOCK) ----------
+  # This job does NOT actually build or push a container image.
+  # It simulates the build so downstream stages can depend on it.
+  # To enable a real build, replace the "Mock build" step with
+  # docker/build-push-action@v6 (see commented block at bottom of file).
+  build:
+    name: build (mock)
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [checker, dashboard]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Mock build ${{ matrix.target }}
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}/${{ matrix.target }}:${{ github.sha }}"
+          echo "[MOCK] Would build image: ${IMAGE}"
+          echo "[MOCK] Dockerfile: Dockerfile.${{ matrix.target }}"
+          echo "[MOCK] Context: ${{ github.workspace }}"
+          echo "[MOCK] Push: ${{ github.event_name != 'pull_request' }}"
+          mkdir -p mock-artifacts
+          echo "${IMAGE}" > "mock-artifacts/${{ matrix.target }}.txt"
+
+      - name: Upload mock image manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: mock-image-${{ matrix.target }}
+          path: mock-artifacts/${{ matrix.target }}.txt
+
+  # ---------- SECURITY STAGE ----------
+  security:
+    name: security
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Filesystem-level vulnerability + misconfig scan (no image needed,
+      # which pairs well with the mock build).
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-fs.sarif
+          exit-code: "0"
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+      # Static analysis for Python (CodeQL is free on public repos).
+      - name: CodeQL init
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - name: CodeQL analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: codeql-python
+
+      # Secret scanning across the repo history for this ref.
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+# ---------------------------------------------------------------------------
+# Reference: real container build (disabled — replaces the "Mock build" step).
+#
+#   - name: Set up Docker Buildx
+#     uses: docker/setup-buildx-action@v3
+#
+#   - name: Log in to GHCR
+#     if: github.event_name != 'pull_request'
+#     uses: docker/login-action@v3
+#     with:
+#       registry: ghcr.io
+#       username: ${{ github.actor }}
+#       password: ${{ secrets.GITHUB_TOKEN }}
+#
+#   - name: Build and push ${{ matrix.target }}
+#     uses: docker/build-push-action@v6
+#     with:
+#       context: .
+#       file: Dockerfile.${{ matrix.target }}
+#       push: ${{ github.event_name != 'pull_request' }}
+#       tags: |
+#         ghcr.io/${{ github.repository }}/${{ matrix.target }}:${{ github.sha }}
+#         ghcr.io/${{ github.repository }}/${{ matrix.target }}:latest
+# ---------------------------------------------------------------------------
