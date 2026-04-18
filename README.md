@@ -52,27 +52,6 @@ run as two containers (checker + dashboard) side-by-side in a single cluster.
 
 ![Architecture](architecture.jpg)
 
-```text
-+------------------+        SSH        +------------------+
-|  Remote NTP/GPS  | <---------------- |    monitor.py    |
-|      host        |   chronyc/gpspipe |   (checker pod)  |
-+------------------+                   +--------+---------+
-                                                |
-                                         INSERT | PostgreSQL
-                                                v
-                                       +------------------+
-                                       |  metrics.ntp_*   |
-                                       |  (partitioned)   |
-                                       +--------+---------+
-                                                ^
-                                         SELECT | aggregations
-                                                |
-+------------------+      HTTP         +--------+---------+
-|     Browser      | <---------------- |     app.py       |
-|  (Plotly UI)     |    /api/latest    | (dashboard pod)  |
-+------------------+    /api/offset    +------------------+
-```
-
 ---
 
 ## Repository layout
