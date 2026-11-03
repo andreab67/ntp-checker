@@ -1,6 +1,9 @@
-from flask import Flask, request, jsonify
-import os, psycopg2, psycopg2.extras
+import os
 from datetime import datetime, timedelta, timezone
+
+import psycopg
+from flask import Flask, jsonify, request
+from psycopg.rows import dict_row
 
 app = Flask(__name__)
 DB_URL = os.getenv('DATABASE_URL')
@@ -17,10 +20,9 @@ SAFE_INTERVALS = {
 }
 
 def q(sql, args=()):
-    with psycopg2.connect(DB_URL) as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.execute(sql, args)
-            return cur.fetchall()
+    with psycopg.connect(DB_URL, row_factory=dict_row) as conn, conn.cursor() as cur:
+        cur.execute(sql, args)
+        return cur.fetchall()
 
 def aggregate_offset(window_human: str, interval_human: str):
     rows = q(f"""

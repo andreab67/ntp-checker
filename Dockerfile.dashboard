@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# System deps (certs + tz); no build toolchain needed when using psycopg2-binary wheels
+# System deps (certs + tz); no build toolchain needed when using psycopg binary wheels
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates tzdata && \
     rm -rf /var/lib/apt/lists/*
@@ -17,7 +17,7 @@ COPY app.py /app/app.py
 RUN pip install --no-cache-dir \
       flask \
       gunicorn \
-      psycopg2-binary
+      "psycopg[binary]==3.3.7"
 
 # Drop privileges
 USER appuser
