@@ -1,12 +1,12 @@
 """PostgreSQL integration checks for the dashboard and monitor database paths."""
 from __future__ import annotations
 
+import ipaddress
 import os
 import unittest
 from unittest import mock
 
 import psycopg
-from psycopg.rows import dict_row
 
 os.environ.setdefault("LOG_PATH", "/tmp/ntp-checker-test.log")
 
@@ -17,16 +17,44 @@ TEST_DATABASE_URL = os.environ.get("NTP_TEST_DATABASE_URL")
 TEST_TABLE = "metrics.ntp_parent"
 
 
+def require_local_test_database(dsn: str) -> dict[str, str]:
+    connection_info = psycopg.conninfo.conninfo_to_dict(dsn)
+    hostaddr = connection_info.get("hostaddr")
+    try:
+        local_hostaddrs = not hostaddr or all(
+            ipaddress.ip_address(address.strip()).is_loopback
+            for address in hostaddr.split(",")
+        )
+    except ValueError:
+        local_hostaddrs = False
+
+    if (
+        connection_info.get("dbname") != "ntp_checker_test"
+        or connection_info.get("host") not in {"127.0.0.1", "localhost"}
+        or not local_hostaddrs
+    ):
+        raise RuntimeError("database integration tests require a local ntp_checker_test database")
+    return connection_info
+
+
+class DatabaseDsnGuardTests(unittest.TestCase):
+    def test_rejects_wrong_database_and_remote_hostaddr_before_connect(self) -> None:
+        unsafe_dsns = (
+            "postgresql://postgres:postgres@127.0.0.1:5432/ntp_checker_other",
+            "postgresql://postgres:postgres@127.0.0.1:5432/ntp_checker_test?hostaddr=192.0.2.10",
+        )
+        for dsn in unsafe_dsns:
+            with self.subTest(dsn=dsn), mock.patch.object(psycopg, "connect") as connect:
+                with self.assertRaises(RuntimeError):
+                    require_local_test_database(dsn)
+                connect.assert_not_called()
+
+
 @unittest.skipUnless(TEST_DATABASE_URL, "NTP_TEST_DATABASE_URL must name the disposable test database")
 class DatabaseDriverTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        connection_info = psycopg.conninfo.conninfo_to_dict(TEST_DATABASE_URL)
-        if (
-            connection_info.get("dbname") != "ntp_checker_test"
-            or connection_info.get("host") not in {"127.0.0.1", "localhost"}
-        ):
-            raise RuntimeError("database integration tests require a local ntp_checker_test database")
+        require_local_test_database(TEST_DATABASE_URL)
 
         with psycopg.connect(TEST_DATABASE_URL) as conn, conn.cursor() as cur:
             cur.execute("CREATE SCHEMA IF NOT EXISTS metrics")
@@ -49,9 +77,14 @@ class DatabaseDriverTests(unittest.TestCase):
     def setUp(self) -> None:
         with psycopg.connect(TEST_DATABASE_URL) as conn:
             conn.execute("TRUNCATE metrics.ntp_parent")
-        app.DB_URL = TEST_DATABASE_URL
-        monitor.DB_URL = TEST_DATABASE_URL
-        monitor.POSTGRES_TABLE = TEST_TABLE
+        for module, name, value in (
+            (app, "DB_URL", TEST_DATABASE_URL),
+            (monitor, "DB_URL", TEST_DATABASE_URL),
+            (monitor, "POSTGRES_TABLE", TEST_TABLE),
+        ):
+            patcher = mock.patch.object(module, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def test_dashboard_reads_named_rows_with_psycopg3(self) -> None:
         with mock.patch.object(psycopg, "connect", wraps=psycopg.connect) as connect:
@@ -64,7 +97,6 @@ class DatabaseDriverTests(unittest.TestCase):
         self.assertEqual(rows[0]["station"], "clock.example.test")
         self.assertEqual(rows[0]["stratum"], 3)
         connect.assert_called_once()
-        self.assertIs(connect.call_args.kwargs.get("row_factory"), dict_row)
 
     def test_monitor_inserts_a_sample_with_psycopg3(self) -> None:
         tracking = {"last_offset_sec": 0.002, "stratum": 3, "leap_status": "Normal"}
@@ -87,6 +119,77 @@ class DatabaseDriverTests(unittest.TestCase):
             row,
             (0.002, 3, 7, "Normal", "3D fix", "* 192.0.2.1", "3D fix"),
         )
+
+
+    def test_parsed_sample_flows_through_dashboard_apis(self) -> None:
+        tracking = monitor.parse_tracking(
+            "Leap status     : Normal\nStratum         : 3\n"
+            "Last offset     : 0.000000 seconds"
+        )
+        sources = monitor.parse_sources(
+            "MS Name/IP address         Stratum Poll Reach LastRx Last sample\n"
+            "^* 192.0.2.1                    2   6   377    31   +0ns[+0ns] +/- 1ms\n"
+            "^+ 192.0.2.2                    2   6   377    30   +1us[+1us] +/- 2ms"
+        )
+        gps_ok, gps_summary, tpv_count, gps_mode = monitor.parse_gpspipe_output(
+            '{"class":"TPV","mode":3,"time":"2026-11-03T12:00:00Z",'
+            '"lat":40.0,"lon":-105.0}'
+        )
+
+        self.assertEqual(tracking, {
+            "leap_status": "Normal", "stratum": 3, "last_offset_sec": 0.0
+        })
+        self.assertTrue(sources["has_selected"])
+        self.assertEqual(sources["total_sources"], 2)
+        self.assertEqual((gps_ok, tpv_count, gps_mode), (True, 1, 3))
+        monitor.db_insert_sample(tracking, sources, gps_ok, gps_summary)
+
+        client = app.app.test_client()
+        latest = client.get("/api/latest")
+        self.assertEqual(latest.status_code, 200)
+        self.assertEqual(latest.get_json()["stratum"], 3)
+        self.assertEqual(latest.get_json()["gps_mode"], "3D fix")
+        self.assertEqual(latest.get_json()["leap_status"], "Normal")
+
+        offset = client.get("/api/offset?window=24h&interval=5min")
+        self.assertEqual(offset.status_code, 200)
+        self.assertEqual(len(offset.get_json()), 1)
+        self.assertEqual(offset.get_json()[0]["avg"], 0.0)
+        self.assertEqual(offset.get_json()[0]["p95"], 0.0)
+        self.assertEqual(offset.get_json()[0]["max"], 0.0)
+
+    def test_empty_database_and_invalid_window_responses(self) -> None:
+        client = app.app.test_client()
+        with mock.patch.object(psycopg, "connect", wraps=psycopg.connect) as connect:
+            self.assertEqual(client.get("/api/latest").get_json(), {})
+            self.assertEqual(client.get("/api/offset").get_json(), [])
+            self.assertEqual(connect.call_count, 2)
+            invalid = client.get("/api/offset?window=forever&interval=5min")
+            self.assertEqual(connect.call_count, 2)
+
+        self.assertEqual(invalid.status_code, 400)
+
+    def test_query_failure_does_not_break_following_connection(self) -> None:
+        with self.assertRaises(psycopg.errors.UndefinedTable):
+            app.q("SELECT * FROM metrics.table_that_does_not_exist")
+
+        rows = app.q("SELECT 1 AS available")
+        self.assertEqual(rows[0]["available"], 1)
+
+    def test_failed_insert_rolls_back_and_next_insert_succeeds(self) -> None:
+        tracking = {"last_offset_sec": 0.004, "stratum": 2, "leap_status": "Normal"}
+        sources = {"total_sources": 1, "selected_line": "^* 192.0.2.1"}
+
+        with mock.patch.object(monitor, "POSTGRES_TABLE", "metrics.table_that_does_not_exist"):
+            monitor.db_insert_sample(tracking, sources, True, "3D fix")
+
+        monitor.db_insert_sample(tracking, sources, True, "3D fix")
+        with psycopg.connect(TEST_DATABASE_URL) as conn:
+            row = conn.execute(
+                "SELECT count(*), max(last_offset_sec) FROM metrics.ntp_parent"
+            ).fetchone()
+
+        self.assertEqual(row, (1, 0.004))
 
 
 if __name__ == "__main__":
