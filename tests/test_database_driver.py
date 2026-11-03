@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import subprocess
+import sys
 import unittest
 from unittest import mock
 
@@ -43,10 +45,15 @@ class DatabaseDsnGuardTests(unittest.TestCase):
             "postgresql://postgres:postgres@127.0.0.1:5432/ntp_checker_other",
             "postgresql://postgres:postgres@127.0.0.1:5432/ntp_checker_test?hostaddr=192.0.2.10",
         )
+        test_module = sys.modules[__name__]
         for dsn in unsafe_dsns:
-            with self.subTest(dsn=dsn), mock.patch.object(psycopg, "connect") as connect:
-                with self.assertRaises(RuntimeError):
-                    require_local_test_database(dsn)
+            with (
+                self.subTest(dsn=dsn),
+                mock.patch.object(test_module, "TEST_DATABASE_URL", dsn),
+                mock.patch.object(psycopg, "connect") as connect,
+                self.assertRaises(RuntimeError),
+            ):
+                DatabaseDriverTests.setUpClass()
                 connect.assert_not_called()
 
 
@@ -131,17 +138,28 @@ class DatabaseDriverTests(unittest.TestCase):
             "^* 192.0.2.1                    2   6   377    31   +0ns[+0ns] +/- 1ms\n"
             "^+ 192.0.2.2                    2   6   377    30   +1us[+1us] +/- 2ms"
         )
-        gps_ok, gps_summary, tpv_count, gps_mode = monitor.parse_gpspipe_output(
+        gps_output = (
             '{"class":"TPV","mode":3,"time":"2026-11-03T12:00:00Z",'
             '"lat":40.0,"lon":-105.0}'
         )
+        with mock.patch.object(
+            monitor.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(
+                args=["ssh"], returncode=0, stdout=gps_output, stderr=""
+            ),
+        ) as run:
+            gps_ok, gps_summary = monitor.run_gps_status()
+        run.assert_called_once()
 
         self.assertEqual(tracking, {
             "leap_status": "Normal", "stratum": 3, "last_offset_sec": 0.0
         })
         self.assertTrue(sources["has_selected"])
         self.assertEqual(sources["total_sources"], 2)
-        self.assertEqual((gps_ok, tpv_count, gps_mode), (True, 1, 3))
+        self.assertTrue(gps_ok)
+        self.assertIn("mode=3D fix", gps_summary)
+        self.assertIn("pos=(40.0,-105.0)", gps_summary)
         monitor.db_insert_sample(tracking, sources, gps_ok, gps_summary)
 
         client = app.app.test_client()
@@ -169,10 +187,23 @@ class DatabaseDriverTests(unittest.TestCase):
 
         self.assertEqual(invalid.status_code, 400)
 
-    def test_query_failure_does_not_break_following_connection(self) -> None:
-        with self.assertRaises(psycopg.errors.UndefinedTable):
+    def test_query_failure_closes_connection_and_following_query_succeeds(self) -> None:
+        real_connect = psycopg.connect
+        connections = []
+
+        def capture_connection(*args, **kwargs):
+            connection = real_connect(*args, **kwargs)
+            connections.append(connection)
+            return connection
+
+        with (
+            mock.patch.object(psycopg, "connect", side_effect=capture_connection),
+            self.assertRaises(psycopg.errors.UndefinedTable),
+        ):
             app.q("SELECT * FROM metrics.table_that_does_not_exist")
 
+        self.assertEqual(len(connections), 1)
+        self.assertTrue(connections[0].closed)
         rows = app.q("SELECT 1 AS available")
         self.assertEqual(rows[0]["available"], 1)
 
@@ -180,9 +211,22 @@ class DatabaseDriverTests(unittest.TestCase):
         tracking = {"last_offset_sec": 0.004, "stratum": 2, "leap_status": "Normal"}
         sources = {"total_sources": 1, "selected_line": "^* 192.0.2.1"}
 
-        with mock.patch.object(monitor, "POSTGRES_TABLE", "metrics.table_that_does_not_exist"):
+        real_connect = psycopg.connect
+        connections = []
+
+        def capture_connection(*args, **kwargs):
+            connection = real_connect(*args, **kwargs)
+            connections.append(connection)
+            return connection
+
+        with (
+            mock.patch.object(psycopg, "connect", side_effect=capture_connection),
+            mock.patch.object(monitor, "POSTGRES_TABLE", "metrics.table_that_does_not_exist"),
+        ):
             monitor.db_insert_sample(tracking, sources, True, "3D fix")
 
+        self.assertEqual(len(connections), 1)
+        self.assertTrue(connections[0].closed)
         monitor.db_insert_sample(tracking, sources, True, "3D fix")
         with psycopg.connect(TEST_DATABASE_URL) as conn:
             row = conn.execute(
