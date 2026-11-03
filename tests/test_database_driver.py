@@ -51,9 +51,9 @@ class DatabaseDsnGuardTests(unittest.TestCase):
                 self.subTest(dsn=dsn),
                 mock.patch.object(test_module, "TEST_DATABASE_URL", dsn),
                 mock.patch.object(psycopg, "connect") as connect,
-                self.assertRaises(RuntimeError),
             ):
-                DatabaseDriverTests.setUpClass()
+                with self.assertRaises(RuntimeError):
+                    DatabaseDriverTests.setUpClass()
                 connect.assert_not_called()
 
 
