@@ -180,7 +180,7 @@ an SSH key accepted by the remote NTP host.
 
 ```bash
 # 1. Install deps
-python -m pip install flask gunicorn psycopg2-binary
+python -m pip install flask gunicorn "psycopg[binary]==3.3.7"
 
 # 2. Create the schema
 export DATABASE_URL=postgresql://user:pass@localhost:5432/ntp-checker

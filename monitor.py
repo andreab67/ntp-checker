@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-import os, time, smtplib, logging, subprocess, json, shlex
+import json
+import logging
+import os
+import shlex
+import smtplib
+import subprocess
+import time
 from datetime import datetime
-from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 # --- Postgres ---
-import psycopg2
-import psycopg2.extras
+import psycopg
 
 # -------- Settings from env (with sensible defaults) --------
 HOST = os.getenv('NTP_HOST', 'myntp')
@@ -241,7 +246,7 @@ def db_insert_sample(tracking: dict, sources: dict, gps_ok: bool, gps_summary: s
         logging.debug('DB write skipped: no DATABASE_URL set')
         return
     try:
-        with psycopg2.connect(DB_URL) as conn:
+        with psycopg.connect(DB_URL) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""

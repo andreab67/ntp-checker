@@ -8,6 +8,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Replace psycopg2 with psycopg[binary]==3.3.7 in the checker and dashboard; preserve PostgreSQL queries and sample writes.
+
 ### Added
 - `LICENSE` (BSD 3-Clause).
 - `CONTRIBUTORS.md` listing the project maintainer and how to be added.
