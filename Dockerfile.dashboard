@@ -17,7 +17,7 @@ COPY app.py /app/app.py
 RUN pip install --no-cache-dir \
       flask \
       gunicorn \
-      "psycopg[binary]==3.3.7"
+      "psycopg[binary]==3.3.8"
 
 # Drop privileges
 USER appuser
