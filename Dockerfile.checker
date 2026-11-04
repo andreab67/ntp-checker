@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python deps (server-side only; Plotly comes from CDN in the HTML)
-RUN pip install --no-cache-dir "psycopg[binary]==3.3.7"
+RUN pip install --no-cache-dir "psycopg[binary]==3.3.8"
 
 # App directory and non-root user
 WORKDIR /app
